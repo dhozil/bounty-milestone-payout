@@ -1,0 +1,38 @@
+# Submission: Bounty & Milestone Payout
+
+## Category
+Intelligent Contracts
+
+## Contract Name
+Bounty & Milestone Payout
+
+## Summary
+A reusable GenLayer primitive for trustless bounties and milestone-based payouts. Creators fund bounties with natural-language acceptance criteria, solvers submit work via URL, and GenLayer validators reach consensus on whether the submission satisfies the criteria — releasing funds automatically on approval.
+
+## What Makes This Unique
+- **Consensus-based evaluation**: LLM validators decide "does this meet the bounty?" instead of a trusted judge
+- **Solver dispute path**: rejected solvers can dispute; validators re-evaluate and uphold or overturn
+- **Atomic payout**: approved bounties pay exactly once, no double release
+- **No locked funds**: cancel, evaluation-timeout reclaim, and expiry reclaim cover every stuck state
+- **Reusable primitive**: foundation for bug bounties, grants, hackathons, milestone gig work
+
+## How Consensus Is Used
+The contract uses `gl.vm.run_nondet_unsafe()` with a custom validator function. Each validator independently fetches the submission URL on-chain and evaluates it against the bounty criteria. Consensus is reached when validators agree on the exact decision (`approve`/`reject`, `uphold_rejection`/`overturn_to_approve`).
+
+## Technical Details
+- Python-based GenLayer Intelligent Contract
+- Uses `gl.nondet.exec_prompt()` for LLM evaluation and dispute resolution
+- Uses `gl.nondet.web.get()` for contract-side submission acquisition (non-200 reverts)
+- Custom validators require exact decision agreement
+- TreeMap for scalable bounty and submission storage
+- Payouts via `emit_transfer`; integer-only value domain
+
+## Use Case
+Bug bounty platforms, grant programs, hackathon prizes, milestone-based freelance work — any scenario where payment depends on judging submitted work against stated criteria.
+
+## Live Deployment
+Deployed on GenLayer studionet (chain `61999`):
+[`0xd5187391b8531e4C09E20Ef544Fbb312279be797`](https://explorer-studio.genlayer.com/address/0xd5187391b8531e4C09E20Ef544Fbb312279be797)
+
+## Source Code
+See `contracts/bounty_milestone_payout.py`
