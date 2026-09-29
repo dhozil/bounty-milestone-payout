@@ -32,7 +32,7 @@ Bug bounty platforms, grant programs, hackathon prizes, milestone-based freelanc
 
 ## Live Deployment
 Deployed on GenLayer studionet (chain `61999`):
-[`0xd5187391b8531e4C09E20Ef544Fbb312279be797`](https://explorer-studio.genlayer.com/address/0xd5187391b8531e4C09E20Ef544Fbb312279be797)
+[`0xD6644fc00207A7B0846A14D099be122Ae6040190`](https://explorer-studio.genlayer.com/address/0xD6644fc00207A7B0846A14D099be122Ae6040190)
 
 ## Source Code
 See `contracts/bounty_milestone_payout.py`

@@ -9,7 +9,7 @@
 ![Status](https://img.shields.io/badge/status-live%20on%20studionet-2ea44f)
 ![Tests](https://img.shields.io/badge/tests-10%20passed-2ea44f)
 
-[Live Contract](https://explorer-studio.genlayer.com/address/0xd5187391b8531e4C09E20Ef544Fbb312279be797) ·
+[Live Contract](https://explorer-studio.genlayer.com/address/0xD6644fc00207A7B0846A14D099be122Ae6040190) ·
 [GenLayer Docs](https://docs.genlayer.com)
 
 </div>
@@ -24,8 +24,8 @@ Bug bounties, grants and milestone payouts today depend on a trusted middleman t
 
 | | |
 |---|---|
-| **Contract** | [BountyMilestonePayout](https://explorer-studio.genlayer.com/address/0xd5187391b8531e4C09E20Ef544Fbb312279be797) |
-| **Address** | `0xd5187391b8531e4C09E20Ef544Fbb312279be797` |
+| **Contract** | [BountyMilestonePayout](https://explorer-studio.genlayer.com/address/0xD6644fc00207A7B0846A14D099be122Ae6040190) |
+| **Address** | `0xD6644fc00207A7B0846A14D099be122Ae6040190` |
 | **Network** | GenLayer studionet (chain `61999`) |
 | **Status** | ✅ deployed + audited on-chain |
 
