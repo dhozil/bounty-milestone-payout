@@ -17,7 +17,9 @@ A reusable GenLayer primitive for trustless bounties and milestone-based payouts
 - **Reusable primitive**: foundation for bug bounties, grants, hackathons, milestone gig work
 
 ## How Consensus Is Used
-The contract uses `gl.vm.run_nondet_unsafe()` with a custom validator function. Each validator independently fetches the submission URL on-chain and evaluates it against the bounty criteria. Consensus is reached when validators agree on the exact decision (`approve`/`reject`, `uphold_rejection`/`overturn_to_approve`).
+The contract uses `gl.vm.run_nondet_unsafe()` with a custom validator function. Each validator independently fetches the submission URL on-chain (`gl.nondet.web.get`, non-200 reverts) and the **contract-fetched content is embedded directly into the prompt** (`--- BEGIN FETCHED CONTENT ---`), so evaluation and dispute both judge the exact bytes the contract retrieved — not a URL the LLM would re-fetch on its own. Consensus is reached when validators agree on the exact decision (`approve`/`reject`, `uphold_rejection`/`overturn_to_approve`).
+
+The dispute path performs a **fresh evaluation** of the fetched content against the criteria; the original decision's free-form reasoning is deliberately not carried into the dispute prompt, so no unverified text can influence the final outcome.
 
 ## Technical Details
 - Python-based GenLayer Intelligent Contract
