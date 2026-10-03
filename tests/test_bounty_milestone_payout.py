@@ -210,3 +210,206 @@ def test_views(direct_vm, direct_deploy):
     subs = contract.get_bounty_submissions(bid)
     assert len(subs) == 1
     assert subs[0]["solver"] == str(solver)
+
+
+def _reject_then(bid, contract, vm, creator, solver, hold_json=None):
+    """Common setup: bounty submitted and rejected (creator evaluated)."""
+    vm.sender = solver
+    contract.submit_work(bid, SUBMIT_URL, SUBMIT_DESC)
+    vm.mock_web(re.escape(SUBMIT_URL), {"status": 200, "body": "Partial fix"})
+    vm.mock_llm(re.escape("bounty evaluator"), REJECT_JSON)
+    vm.sender = creator
+    contract.evaluate_submission(bid)
+    assert contract.get_bounty(bid)["status"] == "rejected"
+
+
+def test_claim_reward_by_solver(direct_vm, direct_deploy):
+    contract = direct_deploy("contracts/bounty_milestone_payout.py")
+    creator = create_address("creator")
+    solver = create_address("solver")
+    other = create_address("other")
+
+    bid = _create_bounty(contract, direct_vm, creator)
+    direct_vm.sender = solver
+    contract.submit_work(bid, SUBMIT_URL, SUBMIT_DESC)
+
+    direct_vm.mock_web(re.escape(SUBMIT_URL), {"status": 200, "body": "Fix"})
+    direct_vm.mock_llm(re.escape("bounty evaluator"), EVAL_JSON)
+    direct_vm.sender = creator
+    contract.evaluate_submission(bid)
+    assert contract.get_bounty(bid)["status"] == "approved"
+
+    with direct_vm.expect_revert("Only solver can claim reward"):
+        contract.claim_reward(bid)
+    direct_vm.sender = other
+    with direct_vm.expect_revert("Only solver can claim reward"):
+        contract.claim_reward(bid)
+
+    direct_vm.sender = solver
+    contract.claim_reward(bid)
+    assert contract.get_bounty(bid)["status"] == "paid"
+
+    with direct_vm.expect_revert("not approved"):
+        contract.claim_reward(bid)
+
+
+def test_release_then_claim_replay_safe(direct_vm, direct_deploy):
+    contract = direct_deploy("contracts/bounty_milestone_payout.py")
+    creator = create_address("creator")
+    solver = create_address("solver")
+
+    bid = _create_bounty(contract, direct_vm, creator)
+    direct_vm.sender = solver
+    contract.submit_work(bid, SUBMIT_URL, SUBMIT_DESC)
+
+    direct_vm.mock_web(re.escape(SUBMIT_URL), {"status": 200, "body": "Fix"})
+    direct_vm.mock_llm(re.escape("bounty evaluator"), EVAL_JSON)
+    direct_vm.sender = creator
+    contract.evaluate_submission(bid)
+
+    contract.release_funds(bid)
+    assert contract.get_bounty(bid)["status"] == "paid"
+
+    with direct_vm.expect_revert("not approved"):
+        contract.release_funds(bid)
+    direct_vm.sender = solver
+    with direct_vm.expect_revert("not approved"):
+        contract.claim_reward(bid)
+
+
+def test_finalize_rejection_bounded_by_dispute_window(direct_vm, direct_deploy):
+    from datetime import datetime, timedelta
+
+    contract = direct_deploy("contracts/bounty_milestone_payout.py")
+    creator = create_address("creator")
+    solver = create_address("solver")
+
+    bid = _create_bounty(contract, direct_vm, creator)
+    _reject_then(bid, contract, direct_vm, creator, solver)
+    assert contract.get_bounty(bid)["dispute_deadline"] != ""
+
+    direct_vm.sender = creator
+    with direct_vm.expect_revert("Dispute window is still open"):
+        contract.finalize_rejection(bid)
+
+    direct_vm.warp((datetime.now() + timedelta(days=4)).isoformat())
+    contract.finalize_rejection(bid)
+    assert contract.get_bounty(bid)["status"] == "refunded"
+
+    with direct_vm.expect_revert("not rejected"):
+        contract.finalize_rejection(bid)
+    direct_vm.sender = solver
+    with direct_vm.expect_revert("Bounty is not rejected"):
+        contract.dispute_rejection(bid, "should be impossible")
+
+
+def test_finalize_rejection_after_upheld_dispute(direct_vm, direct_deploy):
+    contract = direct_deploy("contracts/bounty_milestone_payout.py")
+    creator = create_address("creator")
+    solver = create_address("solver")
+
+    bid = _create_bounty(contract, direct_vm, creator)
+    _reject_then(bid, contract, direct_vm, creator, solver)
+
+    direct_vm.mock_web(re.escape(SUBMIT_URL), {"status": 200, "body": "Fix"})
+    direct_vm.mock_llm(re.escape("bounty dispute resolver"), DISPUTE_UPHOLD_JSON)
+    direct_vm.sender = solver
+    result = contract.dispute_rejection(bid, "My work is complete.")
+    assert result["decision"] == "uphold_rejection"
+    assert contract.get_bounty(bid)["status"] == "rejected"
+
+    with direct_vm.expect_revert("already been disputed"):
+        contract.dispute_rejection(bid, "Second dispute attempt.")
+
+    direct_vm.sender = creator
+    contract.finalize_rejection(bid)
+    assert contract.get_bounty(bid)["status"] == "refunded"
+
+
+def test_dispute_window_expires(direct_vm, direct_deploy):
+    from datetime import datetime, timedelta
+
+    contract = direct_deploy("contracts/bounty_milestone_payout.py")
+    creator = create_address("creator")
+    solver = create_address("solver")
+
+    bid = _create_bounty(contract, direct_vm, creator)
+    _reject_then(bid, contract, direct_vm, creator, solver)
+
+    direct_vm.warp((datetime.now() + timedelta(days=4)).isoformat())
+    direct_vm.sender = solver
+    with direct_vm.expect_revert("Dispute window has passed"):
+        contract.dispute_rejection(bid, "Too late dispute.")
+
+
+def test_evaluation_timeout_pays_solver(direct_vm, direct_deploy):
+    from datetime import datetime, timedelta
+
+    contract = direct_deploy("contracts/bounty_milestone_payout.py")
+    creator = create_address("creator")
+    solver = create_address("solver")
+
+    bid = _create_bounty(contract, direct_vm, creator)
+    direct_vm.sender = solver
+    contract.submit_work(bid, SUBMIT_URL, SUBMIT_DESC)
+
+    direct_vm.warp((datetime.now() + timedelta(days=8)).isoformat())
+
+    direct_vm.mock_web(re.escape(SUBMIT_URL), {"status": 200, "body": "Fix"})
+    direct_vm.mock_llm(re.escape("bounty evaluator"), EVAL_JSON)
+    direct_vm.sender = creator
+    with direct_vm.expect_revert("Evaluation window has passed"):
+        contract.evaluate_submission(bid)
+
+    with direct_vm.expect_revert("Only solver can claim timeout"):
+        contract.claim_evaluation_timeout(bid)
+
+    direct_vm.sender = solver
+    contract.claim_evaluation_timeout(bid)
+    assert contract.get_bounty(bid)["status"] == "paid"
+
+    with direct_vm.expect_revert("not in submitted state"):
+        contract.claim_evaluation_timeout(bid)
+
+
+def test_timeout_claim_before_deadline_reverts(direct_vm, direct_deploy):
+    contract = direct_deploy("contracts/bounty_milestone_payout.py")
+    creator = create_address("creator")
+    solver = create_address("solver")
+
+    bid = _create_bounty(contract, direct_vm, creator)
+    direct_vm.sender = solver
+    contract.submit_work(bid, SUBMIT_URL, SUBMIT_DESC)
+
+    with direct_vm.expect_revert("Evaluation deadline has not passed"):
+        contract.claim_evaluation_timeout(bid)
+    assert contract.get_bounty(bid)["status"] == "submitted"
+
+
+def test_reclaim_then_cancel_single_refund(direct_vm, direct_deploy):
+    from datetime import datetime, timedelta
+
+    contract = direct_deploy("contracts/bounty_milestone_payout.py")
+    creator = create_address("creator")
+    solver = create_address("solver")
+
+    bid = _create_bounty(contract, direct_vm, creator)
+    direct_vm.sender = solver
+    contract.submit_work(bid, SUBMIT_URL, SUBMIT_DESC)
+    direct_vm.sender = creator
+    with direct_vm.expect_revert("not open"):
+        contract.reclaim_expired(bid)
+
+    bid2 = _create_bounty(contract, direct_vm, creator)
+    direct_vm.warp((datetime.now() + timedelta(days=8)).isoformat())
+    direct_vm.sender = creator
+    contract.reclaim_expired(bid2)
+    assert contract.get_bounty(bid2)["status"] == "expired"
+
+    contract.cancel_bounty(bid2)
+    assert contract.get_bounty(bid2)["status"] == "cancelled"
+
+    with direct_vm.expect_revert("Cannot cancel in current status"):
+        contract.cancel_bounty(bid2)
+    with direct_vm.expect_revert("Bounty is not open"):
+        contract.reclaim_expired(bid2)

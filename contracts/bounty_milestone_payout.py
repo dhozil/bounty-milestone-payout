@@ -17,7 +17,6 @@ STATUS_OPEN = "open"
 STATUS_SUBMITTED = "submitted"
 STATUS_APPROVED = "approved"
 STATUS_REJECTED = "rejected"
-STATUS_DISPUTED = "disputed"
 STATUS_EXPIRED = "expired"
 STATUS_PAID = "paid"
 STATUS_CANCELLED = "cancelled"
@@ -27,6 +26,7 @@ DECISION_APPROVE = "approve"
 DECISION_REJECT = "reject"
 
 EVALUATION_TIMEOUT_DAYS = 7
+DISPUTE_WINDOW_DAYS = 3
 
 
 @allow_storage
@@ -42,6 +42,7 @@ class Bounty:
     created_at: str
     deadline: str
     evaluation_deadline: str
+    dispute_deadline: str
     solver: str
     submission_url: str
     submission_desc: str
@@ -72,6 +73,7 @@ def _bounty_to_dict(b: Bounty) -> dict:
         "created_at": b.created_at,
         "deadline": b.deadline,
         "evaluation_deadline": b.evaluation_deadline,
+        "dispute_deadline": b.dispute_deadline,
         "solver": b.solver,
         "submission_url": b.submission_url,
         "submission_desc": b.submission_desc,
@@ -260,6 +262,7 @@ class BountyMilestonePayout(gl.Contract):
             created_at=str(datetime.now()),
             deadline=deadline_dt.isoformat(),
             evaluation_deadline="",
+            dispute_deadline="",
             solver="",
             submission_url="",
             submission_desc="",
@@ -327,6 +330,10 @@ class BountyMilestonePayout(gl.Contract):
             raise gl.vm.UserError("Bounty has no submission to evaluate")
         if not b.submission_url.strip():
             raise gl.vm.UserError("No submission URL")
+        if datetime.now() > datetime.fromisoformat(b.evaluation_deadline):
+            raise gl.vm.UserError(
+                "Evaluation window has passed; solver may claim the timeout"
+            )
 
         bounty_dict = _bounty_to_dict(b)
 
@@ -370,6 +377,9 @@ class BountyMilestonePayout(gl.Contract):
             b.status = STATUS_APPROVED
         else:
             b.status = STATUS_REJECTED
+            b.dispute_deadline = (
+                datetime.now() + timedelta(days=DISPUTE_WINDOW_DAYS)
+            ).isoformat()
 
         return {
             "decision": result["decision"],
@@ -386,6 +396,10 @@ class BountyMilestonePayout(gl.Contract):
             raise gl.vm.UserError("Only solver can dispute")
         if b.status != STATUS_REJECTED:
             raise gl.vm.UserError("Bounty is not rejected")
+        if b.dispute_reason.strip():
+            raise gl.vm.UserError("Rejection has already been disputed")
+        if b.dispute_deadline.strip() and datetime.now() > datetime.fromisoformat(b.dispute_deadline):
+            raise gl.vm.UserError("Dispute window has passed")
         if not dispute_reason.strip():
             raise gl.vm.UserError("Dispute reason is required")
         if len(dispute_reason) > MAX_DISPUTE_REASON_CHARS:
@@ -460,6 +474,35 @@ class BountyMilestonePayout(gl.Contract):
         _payout(b.solver, b.reward)
 
     @gl.public.write
+    def claim_reward(self, bounty_id: str) -> None:
+        if bounty_id not in self.bounties:
+            raise gl.vm.UserError("Bounty not found")
+        b = self.bounties[bounty_id]
+        if gl.message.sender_address.as_hex != b.solver:
+            raise gl.vm.UserError("Only solver can claim reward")
+        if b.status != STATUS_APPROVED:
+            raise gl.vm.UserError("Bounty not approved yet")
+
+        b.status = STATUS_PAID
+        _payout(b.solver, b.reward)
+
+    @gl.public.write
+    def finalize_rejection(self, bounty_id: str) -> None:
+        if bounty_id not in self.bounties:
+            raise gl.vm.UserError("Bounty not found")
+        b = self.bounties[bounty_id]
+        if gl.message.sender_address.as_hex != b.creator:
+            raise gl.vm.UserError("Only creator can finalize rejection")
+        if b.status != STATUS_REJECTED:
+            raise gl.vm.UserError("Bounty is not rejected")
+        if not b.dispute_reason.strip():
+            if b.dispute_deadline.strip() and datetime.now() <= datetime.fromisoformat(b.dispute_deadline):
+                raise gl.vm.UserError("Dispute window is still open")
+
+        b.status = STATUS_REFUNDED
+        _payout(b.creator, b.reward)
+
+    @gl.public.write
     def claim_evaluation_timeout(self, bounty_id: str) -> None:
         if bounty_id not in self.bounties:
             raise gl.vm.UserError("Bounty not found")
@@ -473,8 +516,8 @@ class BountyMilestonePayout(gl.Contract):
         if datetime.now() <= datetime.fromisoformat(b.evaluation_deadline):
             raise gl.vm.UserError("Evaluation deadline has not passed")
 
-        b.status = STATUS_REFUNDED
-        _payout(b.creator, b.reward)
+        b.status = STATUS_PAID
+        _payout(b.solver, b.reward)
 
     @gl.public.write
     def cancel_bounty(self, bounty_id: str) -> None:
@@ -502,7 +545,6 @@ class BountyMilestonePayout(gl.Contract):
             raise gl.vm.UserError("Deadline has not passed")
 
         b.status = STATUS_EXPIRED
-        _payout(b.creator, b.reward)
 
     @gl.public.view
     def get_bounty(self, bounty_id: str) -> dict:
